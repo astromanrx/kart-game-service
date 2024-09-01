@@ -1,10 +1,10 @@
-import { Room, Client } from "colyseus";
+import { Room, Client, Delayed } from "colyseus";
 import { Appearance, KartRoomState } from "./schema/KartRoomState";
 import { ContractAPI } from "./utils/ContractAPI";
 export class KartRoom extends Room<KartRoomState> {
   maxClients = 2;
-  gameStartTimeout: NodeJS.Timeout | null = null;
-  gameEndTimeout: NodeJS.Timeout | null = null;
+  countdownDuration = 5;  
+  gameEndTimeout: Delayed | null = null;
   contractApi: ContractAPI | null = null;
 
 
@@ -90,10 +90,20 @@ export class KartRoom extends Room<KartRoomState> {
   startGameCountdown() {
     this.state.status = "loading";
     this.broadcast("start_countdown");
+    let countdown = this.countdownDuration;
     
-    this.gameStartTimeout = setTimeout(() => {
-      this.startGame();
-    }, 5000);
+    const countdownInterval = this.clock.setInterval(() => {
+      if(countdown ==0){
+        countdownInterval.clear();
+        this.startGame();      
+      }else{        
+        this.broadcast("update_countdown",countdown);
+        countdown--;
+      }
+      
+      
+    }, 1000);
+
   }
   startGame() {
     this.state.status = "playing";
@@ -101,14 +111,14 @@ export class KartRoom extends Room<KartRoomState> {
     this.broadcast("start");
 
     // Set a timeout to end the game after 1 minute if not all players have finished
-    this.gameEndTimeout = setTimeout(() => {
+    this.gameEndTimeout = this.clock.setTimeout(() => {
       this.endGame();
     }, 60000);
   }
 
   async endGame() {
     if (this.gameEndTimeout) {
-      clearTimeout(this.gameEndTimeout);
+      this.gameEndTimeout.clear();
     }
 
     this.state.status = "finished";
