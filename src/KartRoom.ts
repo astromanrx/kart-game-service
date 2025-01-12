@@ -1,29 +1,92 @@
 import { Room, Client, Delayed } from "colyseus";
 import { Appearance, KartRoomState } from "./schema/KartRoomState";
-import { ContractAPI } from "./utils/ContractAPI";
+// import { ContractAPI } from "./utils/ContractAPI";
+import { IslandMap, Point } from "./map/map";
+ 
+
 export class KartRoom extends Room<KartRoomState> {
   maxClients = 2;
   countdownDuration = 5;  
   gameEndTimeout: Delayed | null = null;
-  contractApi: ContractAPI | null = null;
 
 
   async onCreate(options: any) {
     console.log("KartRoom created!", options);
 
     this.setState(new KartRoomState());
-    this.contractApi = new ContractAPI();
-    await this.contractApi!.init();
 
 
     this.onMessage("move", (client, data) => {
-      console.log(
-        "KartRoom received message from",
-        client.sessionId,
-        ":",
-        data
-      );
+
+    
+
+      
+      let player = this.state.players.get(client.sessionId)
+      if(player && player.finished)
+        return;
+
       this.state.movePlayer(client.sessionId, data);
+
+      if(player){
+        
+        const oldPosition = <Point>{
+          x: player.x,
+          y: player.y,
+          z: player.z,
+        }
+  
+        const newPosition = <Point>{
+          x: data.x,
+          y: data.y,
+          z: data.z,
+        }
+  
+        let overlappedCheckpoint = IslandMap.IsOverlapCheckpoint(oldPosition,newPosition)
+        if(overlappedCheckpoint !== false && overlappedCheckpoint.index > player.lastPassedCheckpoint){
+          player.lastPassedCheckpoint = overlappedCheckpoint.index;
+          this.broadcast("announce_checkpoint",{
+            player: client.sessionId,
+            checkpoint: overlappedCheckpoint.index   
+          });
+          console.log(`Player ${player.address} Checkpoint: ${overlappedCheckpoint.index}`)
+        }
+  
+        if(IslandMap.IsOverlapFinish(oldPosition,newPosition) ){
+
+          if(!player.finished && player.lastPassedCheckpoint  == IslandMap.getCheckpointsNum()-1 && player.lap == IslandMap.getLapsNum()){
+            this.state.playerFinished(client.sessionId);
+            this.broadcast("announce_finished",client.sessionId);
+
+            console.log(`Player ${player.address} passed finish line!`)
+
+
+            if(this.state.finishedCount === this.maxClients) {
+              this.endGame();
+            }
+          }          
+          
+        }
+  
+        if(IslandMap.IsOverlapStart(oldPosition,newPosition)){
+          if(player.lastPassedCheckpoint != -1){
+            player.lap++;
+            player.lastPassedCheckpoint = -1;
+            this.broadcast("announce_lap",{
+              player: client.sessionId,
+              lap: player.lap   
+            });
+            console.log(`Player lap: ${player.lap}`)
+
+            console.log(`Player ${player.address} passed start line!`)
+
+          }
+
+          player.passedStartline = true;
+          
+          
+        }
+      }
+      
     });
 
     this.onMessage("ready", (client) => {
@@ -32,34 +95,16 @@ export class KartRoom extends Room<KartRoomState> {
       if (this.state.allPlayersReady(this.maxClients)) {
         this.broadcast("load_map");
       }
-    });
-
-    
-
-    this.onMessage("finished", (client) => {
-      console.log("finished!sss", client.state);
-      this.state.playerFinished(client.sessionId);
-      if (this.state.finishedCount === this.maxClients) {
-        this.endGame();
-      }
-    });
+    });    
 
     this.onMessage("map_loaded",(client)=>{
       this.state.setPlayerMapLoaded(client.sessionId);
       if(this.state.allPlayersMapLoaded(this.maxClients)){
         this.startGameCountdown();
       }
+      this.broadcast("spawn",client.sessionId);
     });
 
-  }
-
-  async updateContractScore(roomId: string, player: string,score: number) {
-    try {
-
-      await this.contractApi!.updateScore(roomId, player, score);
-    } catch (error) {
-      console.error(`Failed to update contract score:`, error);
-    }
   }
 
 
@@ -111,9 +156,9 @@ export class KartRoom extends Room<KartRoomState> {
     this.broadcast("start");
 
     // Set a timeout to end the game after 1 minute if not all players have finished
-    this.gameEndTimeout = this.clock.setTimeout(() => {
-      this.endGame();
-    }, 60000);
+    // this.gameEndTimeout = this.clock.setTimeout(() => {
+    //   this.endGame();
+    // }, 60000);
   }
 
   async endGame() {
@@ -129,16 +174,9 @@ export class KartRoom extends Room<KartRoomState> {
         address: player.address,
         finished: player.finished,
         finishTime: player.finishTime,
-        score: player.score
+        rank: player.rank
       }))
-      .sort((a, b) => b.score - a.score);
-
-       // 更新每个玩家的合约分数
-    for (const result of results) {
-      console.log(this.roomId);
-      console.log(`Updating contract score for ${result.address}: ${result.score}`);
-      await this.updateContractScore(this.roomId, result.address, result.score);
-    }
+      .sort((a, b) => b.rank - a.rank);  
 
     this.broadcast("gameOver", { results });
   }

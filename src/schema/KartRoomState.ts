@@ -1,4 +1,5 @@
 import { Schema, type, MapSchema } from "@colyseus/schema";
+import { IslandMap, Point,Checkpoint } from "../map/map";
 
 export interface Appearance{
   hat: string;
@@ -28,8 +29,11 @@ export class PlayerState extends Schema {
   @type("boolean") isMapLoaded: boolean = false;
   @type("boolean") finished: boolean = false;
   @type("number") finishTime: number = 0;
-  @type("number") score: number = 0;
+  @type("number") rank: number = 0;
   @type("string") address: string = '';
+  @type("number") lap: number = 1;
+  @type("number") lastPassedCheckpoint: number = -1;
+  @type("boolean") passedStartline: boolean = false;
 }
 
 export class KartRoomState extends Schema {
@@ -39,6 +43,7 @@ export class KartRoomState extends Schema {
   @type("string") status: string = "waiting"; // waiting, playing, finished
   @type("number") startTime: number = 0;
   @type("number") finishedCount: number = 0;
+
 
   createPlayer(address:string, sessionId: string, name: string, appearance: Appearance) {
     const player = new PlayerState();
@@ -62,6 +67,7 @@ export class KartRoomState extends Schema {
   movePlayer(sessionId: string, movement: any) {
     const player = this.players.get(sessionId);
     if (player) {
+
       player.x = movement.x;
       player.y = movement.y;
       player.z = movement.z;
@@ -69,11 +75,11 @@ export class KartRoomState extends Schema {
       player.rotX = movement.rotX;
       player.rotY = movement.rotY;
       player.rotZ = movement.rotZ;
-      player.rotW = movement.rotW;
-
-      // this.players.set(sessionId, player);
+      player.rotW = movement.rotW;      
     }
   }
+
+  
 
   setPlayerReady(sessionId: string) {
     const player = this.players.get(sessionId);
@@ -100,20 +106,15 @@ export class KartRoomState extends Schema {
     return players.length === maxClients && players.every(player => player.isMapLoaded);
   }
 
-  playerFinished(sessionId: string) {
+  playerFinished(sessionId: string) : number {
     const player = this.players.get(sessionId);
     if (player && !player.finished) {
       player.finished = true;
       player.finishTime = Date.now() - this.startTime;
       this.finishedCount++;
-
-      // Assign scores based on finish order
-      switch (this.finishedCount) {
-        case 1: player.score = 10; break;
-        case 2: player.score = 8; break;
-        case 3: player.score = 6; break;
-        case 4: player.score = 5; break;
-      }
+      player.rank = this.finishedCount  
+      return player.rank    
     }
+    throw new Error("Player already finished the game, you must check it before calling this function!")
   }
 }
